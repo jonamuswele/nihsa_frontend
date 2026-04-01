@@ -23,9 +23,15 @@ L.Icon.Default.mergeOptions({
 });
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────────
-const _RAW_API = "";
-const API_BASE   = _RAW_API + "/api";
-const WS_BASE    = (window.__NIHSA_WS__  || "ws://localhost:8001");
+const API_BASE = process.env.REACT_APP_API_URL 
+  ? `${process.env.REACT_APP_API_URL}/api` 
+  : "/api";
+
+const WS_BASE = process.env.REACT_APP_WS_URL 
+  ? process.env.REACT_APP_WS_URL 
+  : (window.__NIHSA_WS__ || "ws://localhost:8001");
+
+const ATLAS_BASE = process.env.REACT_APP_NFFS_ATLAS || "/nffs/atlas";
 
 // ─── i18n TRANSLATION SYSTEM ──────────────────────────────────────────────────
 const TRANSLATIONS = {
@@ -1398,7 +1404,7 @@ const MapTab = ({ user, gauges, alerts, reports, loading, error }) => {
   }, [mapReady, reports, layers.reports]);
 
   // ── Forecast GeoJSON layers (AFO 2026) ────────────────────────────────────
-  const GEOJSON_BASE = _RAW_API + '/nffs/atlas/geojson/';
+  const GEOJSON_BASE = ATLAS_BASE + '/geojson/';
   const RISK_ZONE_COLORS = {
     watch:'#facc15', medium:'#fb923c', high:'#f97316', severe:'#ef4444', extreme:'#7f1d1d',
   };
@@ -1563,7 +1569,6 @@ const MapTab = ({ user, gauges, alerts, reports, loading, error }) => {
   const [atlasUrl, setAtlasUrl]   = useState(null);
   const [atlasLabel, setAtlasLabel] = useState('');
 
-  const ATLAS_BASE = _RAW_API + '/nffs/atlas/';
 
   // ── Hydrological layer group definitions ──────────────────────────────────
   const LAYER_GROUPS = [
@@ -1763,7 +1768,7 @@ const MapTab = ({ user, gauges, alerts, reports, loading, error }) => {
                       );
                     })}
                     {group.key==='forecast' && (
-                      <button onClick={()=>{setAtlasUrl(_RAW_API+'/nffs/atlas/index.html');setAtlasLabel('Full Atlas');setShowLayerPanel(false);}}
+                      <button onClick={()=>{setAtlasUrl(ATLAS_BASE + '/index.html');setAtlasLabel('Full Atlas');setShowLayerPanel(false);}}
                         style={{marginTop:4,padding:'5px 8px',background:'none',border:`1px dashed ${C.border}`,
                           borderRadius:7,color:C.accent,fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center'}}>
                         Open Full Atlas →
@@ -2060,7 +2065,7 @@ const AtlasAnnualPanel = () => {
   useEffect(() => {
     Promise.all(
       ATLAS_LAYERS_DEF.map(l =>
-        fetch(`${_RAW_API}/nffs/atlas/${l.file}`)
+        fetch(`${ATLAS_BASE}/${l.file}`)
           .then(r => r.ok ? r.text() : Promise.reject(new Error('not ok')))
           .then(txt => {
             const lines = txt.trim().split('\n').slice(1);
@@ -2112,7 +2117,7 @@ const AtlasAnnualPanel = () => {
               <option key={s} value={s === 'All Nigeria' ? '' : s}>{s}</option>
             ))}
           </select>
-          <a href={`${_RAW_API}/nffs/atlas/index.html`} target="_blank" rel="noreferrer"
+          <a href={`${ATLAS_BASE}/index.html`} target="_blank" rel="noreferrer"
             style={{padding:'6px 12px',background:C.primary,borderRadius:6,
               color:'#fff',fontSize:11,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>
             Full Atlas ↗
@@ -2133,7 +2138,7 @@ const AtlasAnnualPanel = () => {
           {/* Stat cards grid */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:16}}>
             {ATLAS_LAYERS_DEF.map(l => (
-              <a key={l.key} href={`${_RAW_API}/nffs/atlas/${l.mapFile}`}
+              <a key={l.key} href={`${ATLAS_BASE}/${l.mapFile}`}
                 target="_blank" rel="noreferrer" style={{textDecoration:'none',color:'inherit'}}>
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:10,
                   padding:'12px 14px',cursor:'pointer',transition:'border-color 0.15s'}}
@@ -2169,8 +2174,8 @@ const AtlasAnnualPanel = () => {
               </div>
               <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                 {[
-                  { label:'Flood Animation', url:`${_RAW_API}/nffs/atlas/flood_animation.html` },
-                  { label:'Flood Extent Map', url:`${_RAW_API}/nffs/atlas/P4_Annual_flood_extent_map.html` },
+                  { label:'Flood Animation', url:`${ATLAS_BASE}/flood_animation.html` },
+                  { label:'Flood Extent Map', url:`${ATLAS_BASE}/P4_Annual_flood_extent_map.html` },
                 ].map(link => (
                   <a key={link.label} href={link.url} target="_blank" rel="noreferrer"
                     style={{padding:'5px 12px',background:C.s2,border:`1px solid ${C.border}`,
@@ -2206,7 +2211,7 @@ const AtlasWeeklyPanel = () => {
   useEffect(() => {
     Promise.all(
       WEEKLY_LAYERS_DEF.map(l =>
-        fetch(`${_RAW_API}/nffs/atlas/geojson/${l.geojson}`)
+        fetch(`${ATLAS_BASE}/geojson/${l.geojson}`)
           .then(r => r.ok ? r.json() : Promise.reject())
           .then(fc => {
             const map = {};
