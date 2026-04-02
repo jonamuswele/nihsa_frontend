@@ -602,6 +602,7 @@ const AuthModal = ({ onClose, onAuth }) => {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [isFloodMarshal, setIsFloodMarshal] = useState(false);
   const [marshalData, setMarshalData] = useState({});
