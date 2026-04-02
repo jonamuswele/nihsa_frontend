@@ -3,7 +3,7 @@
 // ║  Production-grade · Live API · Leaflet Map · WebSocket          ║
 // ║  React + Leaflet + Recharts · PRD-compliant                     ║
 // ╚══════════════════════════════════════════════════════════════════╝
-
+import { useNavigate } from 'react-router-dom';
 import {
   useState, useEffect, useRef, useCallback, useMemo, memo
 } from "react";
@@ -3313,6 +3313,7 @@ export default function PublicApp() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [lang, setLang] = useState(() => { try { return localStorage.getItem('nihsa_lang')||'en'; } catch { return 'en'; } });
+  const navigate = useNavigate();
   // Update translation lang when user changes language
   const handleLangChange = (l) => { setLang(l); _currentLang = l; };
 
@@ -3420,15 +3421,16 @@ export default function PublicApp() {
                   👤 View Profile
                 </button>
                 {['admin','sub_admin','nihsa_staff','government'].includes(user.role) && (
-                  <a href="/admin" target="_blank" rel="noreferrer"
-                    onClick={()=>setShowUserMenu(false)}
+                  <button onClick={()=>{
+                    setShowUserMenu(false);
+                    navigate('/admin');
+                  }}
                     style={{display:'block',width:'100%',padding:'8px 10px',
                       background:`${C.primary}18`,border:`1px solid ${C.primary}40`,
                       borderRadius:7,color:C.primary,fontSize:12,fontWeight:700,
-                      cursor:'pointer',marginBottom:6,textAlign:'left',textDecoration:'none',
-                      boxSizing:'border-box'}}>
-                    🏛 Admin Panel ↗
-                  </a>
+                      cursor:'pointer',marginBottom:6,textAlign:'left'}}>
+                    🏛 Admin Panel
+                  </button>
                 )}
                 <button onClick={()=>{setShowUserMenu(false);api.logout();}}
                   style={{width:'100%',padding:'8px 10px',background:`${C.danger}18`,
