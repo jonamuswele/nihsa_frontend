@@ -4,9 +4,11 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 import { useState, useEffect, useCallback, useRef } from "react";
-
+import { useNavigate } from 'react-router-dom';
 const _RAW_API = "";
-const API_BASE = _RAW_API + "/api";
+const API_BASE = process.env.REACT_APP_API_URL 
+  ? `${process.env.REACT_APP_API_URL}/api` 
+  : "/api";
 const TOKEN_KEY = "nihsa_token";
 
 // ─── DESIGN ────────────────────────────────────────────────────────────────────
@@ -1932,6 +1934,7 @@ function getUserInfo() {
 
 export default function AdminApp() {
   const [authed, setAuthed] = useState(!!localStorage.getItem(TOKEN_KEY));
+  const navigate = useNavigate();
   const [userInfo, setUserInfo] = useState(()=>getUserInfo());
   const [meData, setMeData] = useState(null);   // full profile from /auth/me
 
@@ -2031,7 +2034,11 @@ export default function AdminApp() {
         </nav>
 
         <div style={{padding:'12px 16px',borderTop:`1px solid ${C.border}`}}>
-          <button onClick={()=>{localStorage.removeItem(TOKEN_KEY);setAuthed(false);}} style={{width:'100%',padding:'8px',background:`${C.danger}15`,border:`1px solid ${C.danger}30`,borderRadius:8,color:C.danger,cursor:'pointer',fontSize:12,fontWeight:600}}>
+          <button onClick={()=>{
+            localStorage.removeItem(TOKEN_KEY);
+            setAuthed(false);
+            navigate('/');
+          }} style={{width:'100%',padding:'8px',background:`${C.danger}15`,border:`1px solid ${C.danger}30`,borderRadius:8,color:C.danger,cursor:'pointer',fontSize:12,fontWeight:600}}>
             Sign Out
           </button>
         </div>
