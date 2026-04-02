@@ -758,11 +758,7 @@ const AuthModal = ({ onClose, onAuth }) => {
               onChange={e=>setPassword(e.target.value)}
               onKeyDown={e=>e.key==='Enter'&&submit()}
               style={{...inp,marginBottom:10}} />
-            {mode==='login' && !err && (
-              <div style={{fontSize:11,color:C.muted,marginBottom:8,padding:'5px 8px',background:C.s2,borderRadius:6}}>
-                Admin: <code style={{color:C.accent}}>admin@nihsa.gov.ng</code> / <code style={{color:C.accent}}>nihsa2026</code>
-              </div>
-            )}
+            
 
             {/* Flood Marshal declaration + extended form */}
             {mode==='register' && (
