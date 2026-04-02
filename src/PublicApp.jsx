@@ -751,13 +751,40 @@ const AuthModal = ({ onClose, onAuth }) => {
                 onChange={e=>setName(e.target.value)}
                 style={{...inp,marginBottom:10}} />
             )}
-            <input placeholder="Email address (e.g. admin@nihsa.gov.ng)" type="email" value={email}
+            <input placeholder="Email address (e.g. name@example.com)" type="email" value={email}
               onChange={e=>setEmail(e.target.value)}
               style={{...inp,marginBottom:10}} />
-            <input placeholder={t('password')} type="password" value={password}
-              onChange={e=>setPassword(e.target.value)}
-              onKeyDown={e=>e.key==='Enter'&&submit()}
-              style={{...inp,marginBottom:10}} />
+            <div style={{position: 'relative', marginBottom: 10}}>
+              <input 
+                type={showPassword ? "text" : "password"} 
+                placeholder={t('password')} 
+                value={password}
+                onChange={e=>setPassword(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&submit()}
+                style={{...inp, paddingRight: '45px'}} 
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: '10px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  padding: '5px',
+                  color: C.muted,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                {showPassword ? '👁️' : '👁️‍🗨️'}
+              </button>
+            </div>
             
 
             {/* Flood Marshal declaration + extended form */}
