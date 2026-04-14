@@ -1348,6 +1348,13 @@ const api = {
       return null; 
     }
   },
+
+  async nominatim(query) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=ng&limit=5&addressdetails=1&accept-language=en`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!r.ok) throw new Error('Search failed');
+    return r.json();
+  },
 };
 
 // ─── HOOK: LIVE DATA WITH POLLING ─────────────────────────────────────────────
@@ -3003,8 +3010,13 @@ const MapTab = ({ user, gauges, alerts, reports, loading, error, showReport, set
     setSearching(true);
     try {
       const r = await api.nominatim(searchQ);
-      setSearchRes(r.slice(0,5));
-    } catch {}
+      const results = r.slice(0, 5);
+      setSearchRes(results);
+      // Auto-fly if exactly one result
+      if (results.length === 1) flyTo(results[0]);
+    } catch {
+      setSearchRes([]);
+    }
     setSearching(false);
   };
 
@@ -4047,6 +4059,7 @@ const AtlasWeeklyPanel = () => {
 
   const WEEKLY_LAYERS_DEF = [
     { key:'communities', icon:'🏘️', label:'Communities',   geojson:'weekly_communities.geojson' },
+    { key:'population',  icon:'👥', label:'Population',    geojson:'weekly_population.geojson' },
     { key:'health',      icon:'🏥', label:'Health Centres',geojson:'weekly_health.geojson' },
     { key:'education',   icon:'🏫', label:'Schools',        geojson:'weekly_schools.geojson' },
     { key:'farmland',    icon:'🌾', label:'Farmland',       geojson:'weekly_farmland.geojson' },
@@ -4948,10 +4961,7 @@ const AssistantTab = ({ user, onSignIn, alerts = [], gauges = [] }) => {
         if (user) {
           // ✅ Don't reference quota here - it's not loaded yet
           const roleLabel = roleLabels[user.role] || 'User';
-          greeting = `**NIHSA FloodAI** — Nigeria's official flood intelligence assistant.\n\n**Your plan:** ${roleLabel}\n\n**Current status (${src}):** ${active.length} station${active.length !== 1 ? 's' : ''} with active flood alerts` +
-            (severe.length ? ` — including **${severe.length} at SEVERE or EXTREME level**` : '') + '.' +
-            (lagdo ? `\n\n⚡ **Lagdo Dam cascade is active.** Downstream communities on the Benue River are at elevated risk.` : '') +
-            `\n\n⚠️ **Please use this assistant for hydrology and flood-related questions only.** Use the 🚨 button to report active flooding in your area. Your reports help NIHSA save lives.` +
+          greeting = `**NIHSA FloodAI** — Nigeria's official flood intelligence assistant.\n\n**Your plan:** ${roleLabel}\n\n⚠️ **Please use this assistant for hydrology and flood-related questions only.** Use the 🚨 button to report active flooding in your area. Your reports help NIHSA save lives.` +
             (userLocation ? `\n\n📍 **Your location:** ${userLocation.address} — I'll tailor flood risk information to your area.` : '');
         } else {
           greeting = `**NIHSA FloodAI** — Nigeria's official flood intelligence assistant.\n\n⚠️ **This assistant is for hydrology and flood reporting only.** Please keep all questions related to flood risk, river gauges, safety procedures, and emergency response.\n\n🚨 **See flooding?** Use the Report Flood button to alert NIHSA and help protect your community.\n\n**🔒 Sign in to unlock:**\n• 5–20 free prompts per day (based on your role)\n• Voice input & text-to-speech\n• Personalized flood risk information`;
