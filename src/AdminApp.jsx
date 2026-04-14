@@ -27,9 +27,34 @@ const api = {
   token: () => localStorage.getItem(TOKEN_KEY),
   headers: () => ({ 'Content-Type':'application/json', ...(localStorage.getItem(TOKEN_KEY)?{Authorization:`Bearer ${localStorage.getItem(TOKEN_KEY)}`}:{}) }),
   async req(method, path, body) {
-    const r = await fetch(API_BASE + path, { method, headers:this.headers(), body: body?JSON.stringify(body):undefined });
-    if (r.status===401) { localStorage.removeItem(TOKEN_KEY); window.location.reload(); return null; }
-    if (!r.ok) { const e=await r.json().catch(()=>({detail:'Server error'})); throw new Error(e.detail||'Error'); }
+    // Check if body is FormData
+    const isFormData = body instanceof FormData;
+    
+    const headers = {};
+    if (localStorage.getItem(TOKEN_KEY)) {
+      headers['Authorization'] = `Bearer ${localStorage.getItem(TOKEN_KEY)}`;
+    }
+    
+    // Only set Content-Type for non-FormData requests
+    if (!isFormData) {
+      headers['Content-Type'] = 'application/json';
+    }
+    
+    const r = await fetch(API_BASE + path, { 
+      method, 
+      headers: headers,
+      body: isFormData ? body : (body ? JSON.stringify(body) : undefined)
+    });
+    
+    if (r.status === 401) { 
+      localStorage.removeItem(TOKEN_KEY); 
+      window.location.reload(); 
+      return null; 
+    }
+    if (!r.ok) { 
+      const e = await r.json().catch(() => ({ detail: 'Server error' })); 
+      throw new Error(e.detail || 'Error'); 
+    }
     return r.json();
   },
   get: (p) => api.req('GET',p),
@@ -59,6 +84,18 @@ const api = {
     localStorage.setItem(TOKEN_KEY, d.access_token);
     return d;
   },
+  async upload(path, formData) {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const r = await fetch(API_BASE + path, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},  // No Content-Type! Browser sets it with boundary
+      body: formData,
+    });
+    if (r.status === 401) { localStorage.removeItem(TOKEN_KEY); window.location.reload(); return null; }
+    if (!r.ok) { const e = await r.json().catch(() => ({ detail: 'Upload failed' })); throw new Error(e.detail || 'Upload failed'); }
+    return r.json();
+  },
+
 };
 
 // ─── HOOKS ─────────────────────────────────────────────────────────────────────
@@ -492,19 +529,128 @@ const ReportsSection = ({ onAlertCreated }) => {
   const [saving, setSaving] = useState(null);
   const [reason, setReason] = useState('');
   const [alertBanner, setAlertBanner] = useState(null);
+  const [confirmReject, setConfirmReject] = useState(null);
+  const [mediaErrors, setMediaErrors] = useState({});
 
   const reports = Array.isArray(data) ? data : (data?.items||[]);
 
-  const verify = async (id, status) => {
+  // Helper to get file type from URL or filename
+  const getFileType = (url) => {
+    const urlLower = url.toLowerCase();
+    if (urlLower.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return 'image';
+    if (urlLower.match(/\.(mp4|webm|mov|avi)$/i)) return 'video';
+    if (urlLower.match(/\.(mp3|wav|ogg|m4a)$/i) || urlLower.includes('voice')) return 'audio';
+    return 'unknown';
+  };
+
+  // Handle media load error - mark as failed so we can show fallback
+  const handleMediaError = (url, type) => {
+    console.error(`Failed to load ${type}: ${url}`);
+    setMediaErrors(prev => ({ ...prev, [url]: true }));
+  };
+
+  // Render media with proper players
+  const renderMedia = (urls) => {
+    if (!urls || urls.length === 0) {
+      return (
+        <div style={{padding:'20px',textAlign:'center',background:C.s2,borderRadius:8,color:C.muted}}>
+          📭 No media attachments
+        </div>
+      );
+    }
+
+    return (
+      <div style={{marginTop:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'0.06em',marginBottom:8}}>
+          📎 MEDIA ATTACHMENTS ({urls.length} file{urls.length !== 1 ? 's' : ''})
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {urls.map((url, i) => {
+            const fileName = url.split('/').pop() || `file_${i+1}`;
+            
+            // Determine file type for icon
+            const urlLower = url.toLowerCase();
+            let icon = '📄';
+            let type = 'File';
+            if (urlLower.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+              icon = '🖼️';
+              type = 'Image';
+            } else if (urlLower.match(/\.(mp4|webm|mov|avi)$/i)) {
+              icon = '🎬';
+              type = 'Video';
+            } else if (urlLower.match(/\.(mp3|wav|ogg|m4a)$/i) || urlLower.includes('voice')) {
+              icon = '🎙️';
+              type = 'Audio';
+            }
+            
+            return (
+              <div key={i} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,padding:12}}>
+                <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                  <span style={{fontSize:20}}>{icon}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:C.bright,wordBreak:'break-all'}}>
+                      {fileName}
+                    </div>
+                    <div style={{fontSize:10,color:C.muted}}>{type}</div>
+                  </div>
+                  <a 
+                    href={url} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    style={{
+                      padding:'8px 16px',
+                      background:C.primary,
+                      border:'none',
+                      borderRadius:6,
+                      color:'#fff',
+                      fontSize:12,
+                      fontWeight:600,
+                      textDecoration:'none',
+                      cursor:'pointer',
+                      display:'inline-flex',
+                      alignItems:'center',
+                      gap:6
+                    }}
+                  >
+                    🔗 View / Download
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // Verify report - creates alert
+  const verify = async (id) => {
     setSaving(id);
     try {
-      await api.req('PATCH', `/reports/${id}/verify`, {status, rejection_reason: status==='rejected'?reason:undefined});
-      reload(); setSel(null); setReason('');
-      if (status === 'verified') {
-        setAlertBanner('✅ Report verified — a live Flood Alert has been created and published to the public frontend.');
-        setTimeout(() => setAlertBanner(null), 7000);
-        if (onAlertCreated) onAlertCreated();
-      }
+      await api.req('PATCH', `/reports/${id}/verify`, {status: 'verified'});
+      reload(); 
+      setSel(null); 
+      setAlertBanner('✅ Report verified — a live Flood Alert has been created!');
+      setTimeout(() => setAlertBanner(null), 5000);
+      if (onAlertCreated) onAlertCreated();
+    } catch(e) { alert(e.message); }
+    setSaving(null);
+  };
+
+  // Reject report - deletes media from R2
+  const reject = async (id) => {
+    setSaving(id);
+    try {
+      await api.req('PATCH', `/reports/${id}/verify`, {
+        status: 'rejected', 
+        rejection_reason: reason || 'No reason provided'
+      });
+      reload(); 
+      setSel(null); 
+      setReason('');
+      setConfirmReject(null);
+      setAlertBanner('❌ Report rejected. Media files have been deleted from storage.');
+      setTimeout(() => setAlertBanner(null), 5000);
     } catch(e) { alert(e.message); }
     setSaving(null);
   };
@@ -517,49 +663,10 @@ const ReportsSection = ({ onAlertCreated }) => {
     {key:'all', label:'All', color:C.primary},
   ];
 
-  const renderMedia = (urls) => {
-    if (!urls || urls.length === 0) return null;
-    return (
-      <div style={{marginTop:12}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'0.06em',marginBottom:8}}>MEDIA ATTACHMENTS</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-          {urls.map((url,i) => {
-            // Use relative paths so CRA proxy forwards to :8001 — avoids CORS on media
-            let fullUrl = null;
-            if (url.startsWith('/media/') || url.startsWith('/static/')) {
-              fullUrl = url; // relative → proxy handles it
-            } else if (url.startsWith('http://localhost:8001') || url.startsWith('http://127.0.0.1:8001')) {
-              fullUrl = url.replace(/^http:\/\/(localhost|127\.0\.0\.1):8001/, ''); // strip host → relative
-            }
-            if (!fullUrl) return null;
-            const isVideo = url.includes('video_') || url.endsWith('.mp4') || url.endsWith('.mov') || (url.endsWith('.webm') && !url.includes('voice'));
-            const isAudio = !isVideo && (url.includes('voice') || url.endsWith('.webm') || url.endsWith('.mp3') || url.endsWith('.ogg'));
-            if (isAudio) return (
-              <div key={i} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,padding:10,width:'100%'}}>
-                <div style={{fontSize:11,color:C.muted,marginBottom:6}}>🎙 Voice Recording</div>
-                <audio controls style={{width:'100%',height:32}} src={fullUrl} />
-              </div>
-            );
-            if (isVideo) return (
-              <div key={i} style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:8,padding:10,width:'100%'}}>
-                <div style={{fontSize:11,color:C.muted,marginBottom:6}}>📹 Video Recording</div>
-                <video controls style={{width:'100%',maxHeight:200,borderRadius:6}} src={fullUrl} />
-              </div>
-            );
-            return (
-              <a key={i} href={fullUrl} target="_blank" rel="noreferrer">
-                <img src={fullUrl} alt="report" style={{width:120,height:80,objectFit:'cover',borderRadius:8,border:`1px solid ${C.border}`}} />
-              </a>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div>
       <SectionHeader title="Field Reports" action={<ActionBtn onClick={reload}>↻ Refresh</ActionBtn>} />
+      
       {alertBanner && (
         <div style={{padding:'10px 14px',background:`${C.success}18`,border:`1px solid ${C.success}40`,borderRadius:8,
           color:C.success,fontSize:12,fontWeight:600,marginBottom:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -567,6 +674,7 @@ const ReportsSection = ({ onAlertCreated }) => {
           <button onClick={()=>setAlertBanner(null)} style={{background:'none',border:'none',color:C.success,cursor:'pointer',fontSize:16,lineHeight:1}}>×</button>
         </div>
       )}
+      
       <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
         {STATUS_TABS.map(s=>(
           <button key={s.key} onClick={()=>setFilter(s.key)} style={{
@@ -581,30 +689,56 @@ const ReportsSection = ({ onAlertCreated }) => {
       </div>
 
       {error && <ErrorBox msg={error} onRetry={reload}/>}
+      
       <Table loading={loading} data={reports} onRow={r=>{setSel(r);setReason('');}} cols={[
         {key:'status',label:'STATUS',render:v=>{
           const colors={pending:C.warning,ai_review:C.info,verified:C.success,rejected:C.muted};
           return <span style={{color:colors[v]||C.muted,fontWeight:700,fontSize:11,textTransform:'uppercase'}}>{v}</span>;
         }},
         {key:'address',label:'LOCATION',render:(v,r)=>v||`${r.state||''}${r.lga?', '+r.lga:''}`||'—'},
-        {key:'description',label:'DESCRIPTION',render:v=><span style={{color:C.text}}>{v?.slice(0,60)+'...'||'—'}</span>},
+        {key:'description',label:'DESCRIPTION',render:v=><span style={{color:C.text}} title={v}>{v?.slice(0,60)}{v?.length > 60 ? '…' : ''}</span>},
         {key:'water_depth_m',label:'DEPTH',render:v=>v!=null?`${v}m`:'—'},
-        {key:'media_urls',label:'MEDIA',render:v=><span style={{color:v?.length?C.success:C.muted,fontSize:11}}>{v?.length?`📎 ${v.length} file(s)`:'None'}</span>},
+        {key:'media_urls',label:'MEDIA',render:v=>{
+          if (!v || v.length === 0) return <span style={{color:C.muted,fontSize:11}}>No media</span>;
+          const imgCount = v.filter(url => getFileType(url) === 'image').length;
+          const vidCount = v.filter(url => getFileType(url) === 'video').length;
+          const audCount = v.filter(url => getFileType(url) === 'audio').length;
+          return (
+            <span style={{color:C.success,fontSize:11,display:'flex',gap:4}}>
+              {imgCount > 0 && <span>🖼️ {imgCount}</span>}
+              {vidCount > 0 && <span>🎬 {vidCount}</span>}
+              {audCount > 0 && <span>🎙️ {audCount}</span>}
+            </span>
+          );
+        }},
         {key:'submitted_at',label:'SUBMITTED',render:v=>v?new Date(v).toLocaleString():'—'},
       ]} actions={r=>(
-        (r.status==='pending'||r.status==='ai_review') ? (
-          <div style={{display:'flex',gap:5}}>
-            <ActionBtn small color={C.success} onClick={e=>{e.stopPropagation();verify(r.id,'verified')}} disabled={saving===r.id}>✓ Verify → Alert</ActionBtn>
-            <ActionBtn small color={C.danger} onClick={e=>{e.stopPropagation();setSel(r);}} disabled={saving===r.id}>✗ Reject</ActionBtn>
-          </div>
-        ) : <span style={{fontSize:11,color:C.muted,textTransform:'uppercase'}}>{r.status}</span>
+        <div style={{display:'flex',gap:5}}>
+          {r.status === 'pending' || r.status === 'ai_review' ? (
+            <>
+              <ActionBtn small color={C.success} onClick={e=>{e.stopPropagation();verify(r.id)}} disabled={saving===r.id}>
+                ✓ Verify
+              </ActionBtn>
+              <ActionBtn small color={C.warning} onClick={e=>{e.stopPropagation();setConfirmReject(r);}} disabled={saving===r.id}>
+                ✗ Reject & Delete
+              </ActionBtn>
+            </>
+          ) : (
+            <ActionBtn small color={C.info} onClick={e=>{e.stopPropagation();setSel(r);}}>View Details</ActionBtn>
+          )}
+        </div>
       )} empty="No reports with this status." />
 
+      {/* Report Details Modal */}
       {sel && (
         <Modal title="Report Details" onClose={()=>setSel(null)} wide>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 16px',fontSize:13,color:C.text,lineHeight:1.7,marginBottom:12}}>
             <div><b style={{color:C.muted}}>Report ID:</b> {sel.id?.slice(0,8)}…</div>
-            <div><b style={{color:C.muted}}>Status:</b> <span style={{textTransform:'uppercase',fontWeight:700,color:{pending:C.warning,verified:C.success,rejected:C.muted}[sel.status]||C.info}}>{sel.status}</span></div>
+            <div><b style={{color:C.muted}}>Status:</b> 
+              <span style={{textTransform:'uppercase',fontWeight:700,color:{
+                pending:C.warning,verified:C.success,rejected:C.muted,ai_review:C.info
+              }[sel.status]||C.info}}> {sel.status}</span>
+            </div>
             <div><b style={{color:C.muted}}>Location:</b> {sel.address||'—'}</div>
             <div><b style={{color:C.muted}}>State / LGA:</b> {sel.state||'—'} / {sel.lga||'—'}</div>
             <div><b style={{color:C.muted}}>Depth:</b> {sel.water_depth_m!=null?`${sel.water_depth_m}m`:'Not specified'}</div>
@@ -612,25 +746,44 @@ const ReportsSection = ({ onAlertCreated }) => {
             <div><b style={{color:C.muted}}>Coordinates:</b> {sel.lat?.toFixed(4)||'—'}, {sel.lng?.toFixed(4)||'—'}</div>
             <div><b style={{color:C.muted}}>Submitted:</b> {sel.submitted_at ? new Date(sel.submitted_at).toLocaleString() : '—'}</div>
           </div>
+          
           <div style={{padding:'10px 14px',background:C.s2,borderRadius:8,fontSize:13,color:C.text,lineHeight:1.6,marginBottom:8}}>
+            <b style={{color:C.muted}}>Description:</b><br/>
             {sel.description}
           </div>
+          
           {renderMedia(sel.media_urls)}
-          {(sel.status==='pending'||sel.status==='ai_review') && (
-            <div style={{marginTop:16,paddingTop:16,borderTop:`1px solid ${C.border}`}}>
-              <div style={{padding:'8px 12px',background:`${C.success}12`,border:`1px solid ${C.success}30`,borderRadius:8,fontSize:11,color:C.success,marginBottom:12}}>
-                ⚡ Verifying this report will automatically create a live public <b>Flood Alert</b> visible on the frontend and in the Alerts section.
-              </div>
-              <FormField label="Rejection Reason (required if rejecting)">
-                <Txt value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Explain why this report is rejected..." />
-              </FormField>
-              <div style={{display:'flex',gap:8,marginTop:8,justifyContent:'flex-end'}}>
-                <ActionBtn onClick={()=>setSel(null)}>Cancel</ActionBtn>
-                <ActionBtn color={C.danger} onClick={()=>verify(sel.id,'rejected')} disabled={saving===sel.id||!reason.trim()}>✗ Reject</ActionBtn>
-                <ActionBtn color={C.success} onClick={()=>verify(sel.id,'verified')} disabled={saving===sel.id}>✓ Verify & Publish Alert</ActionBtn>
-              </div>
+        </Modal>
+      )}
+
+      {/* Reject Confirmation Modal */}
+      {confirmReject && (
+        <Modal title="Reject & Delete Report" onClose={()=>setConfirmReject(null)}>
+          <div style={{marginBottom:16}}>
+            <div style={{padding:'12px',background:`${C.warning}12`,border:`1px solid ${C.warning}30`,borderRadius:8,fontSize:13,color:C.text,marginBottom:12}}>
+              ⚠️ <b>Warning: This will permanently delete all media files!</b><br/><br/>
+              Rejecting this report will:
+              <ul style={{marginTop:8,marginBottom:0}}>
+                <li>Mark the report as rejected</li>
+                <li><b>Permanently delete all photos, videos, and voice recordings from Cloudflare R2</b></li>
+                <li>The user will be notified of the rejection</li>
+              </ul>
             </div>
-          )}
+            <FormField label="Rejection Reason" required>
+              <Txt 
+                value={reason} 
+                onChange={e=>setReason(e.target.value)} 
+                rows={3} 
+                placeholder="Provide a clear reason for rejection (will be shown to the user)..." 
+              />
+            </FormField>
+          </div>
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <ActionBtn onClick={()=>{setConfirmReject(null); setReason('');}}>Cancel</ActionBtn>
+            <ActionBtn color={C.warning} onClick={()=>reject(confirmReject.id)} disabled={!reason.trim()}>
+              Confirm Reject & Delete Media
+            </ActionBtn>
+          </div>
         </Modal>
       )}
     </div>
@@ -1159,12 +1312,7 @@ const LoginPage = ({ onAuth }) => {
           {loading ? 'Signing in...' : 'Sign In'}
         </button>
 
-        <div style={{marginTop:20,padding:'12px',background:C.s2,borderRadius:8,fontSize:11,color:C.muted}}>
-          <div style={{marginBottom:4,fontWeight:700,color:C.text}}>Default credentials:</div>
-          <div>Admin: admin@nihsa.gov.ng</div>
-          <div>Coordinator: coordinator@nihsa.gov.ng</div>
-          <div>Password: nihsa2026</div>
-        </div>
+        
       </div>
     </div>
   );
@@ -1252,26 +1400,73 @@ const MapLayersSection = ({ scopeFilter = null }) => {
   };
 
   const uploadLayerFile = async (layerId, file) => {
-    setUploading(p=>({...p,[layerId]:true}));
-    setUploadMsg(p=>({...p,[layerId]:null}));
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const r = await fetch(API_BASE + `/map-layers/${layerId}/upload`, {
-        method: 'POST',
-        headers: {Authorization: token ? `Bearer ${token}` : ''},
-        body: fd,
+    const addMessage = (layerId, text, isError = false) => {
+      setUploadMsg(prev => {
+        const existing = prev[layerId] || { ok: true, text: '', history: [] };
+        const history = existing.history || [];
+        const timestamp = new Date().toLocaleTimeString();
+        history.push({ text, isError, timestamp });
+        while (history.length > 10) history.shift();
+        return {
+          ...prev,
+          [layerId]: { ok: !isError, text: text, history: history }
+        };
       });
-      const d = await r.json();
-      if (r.ok) {
-        setUploadMsg(p=>({...p,[layerId]:{ok:true, text:`✅ ${d.feature_count.toLocaleString()} features · ${d.size_kb} KB`}}));
+    };
+    
+    setUploadMsg(prev => ({
+      ...prev,
+      [layerId]: { ok: true, text: 'Starting upload...', history: [] }
+    }));
+    
+    addMessage(layerId, `🔵 START: ${file?.name || 'unknown'} (${Math.round(file?.size/1024 || 0)} KB)`);
+    setUploading(p=>({...p,[layerId]:true}));
+    
+    const isZip = file.name.toLowerCase().endsWith('.zip');
+
+    // CSV → read as text. ZIP → read as base64 (binary-safe for JSON transport)
+    let fileContent;
+    if (isZip) {
+      addMessage(layerId, `📦 ZIP detected — reading as base64...`);
+      fileContent = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result.split(',')[1]); // strip data: prefix
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      addMessage(layerId, `📦 Base64 encoded (${Math.round(fileContent.length / 1024)} KB encoded)`);
+    } else {
+      fileContent = await file.text();
+    }
+    
+    addMessage(layerId, `🌐 URL: ${API_BASE}/map-layers/${layerId}/upload`);
+    addMessage(layerId, `🔑 Token: ${api.token() ? '✓ Present' : '✗ MISSING!'}`);
+    addMessage(layerId, `📡 Sending POST request...`);
+    
+    try {
+      const startTime = Date.now();
+      
+      const response = await api.post(`/map-layers/${layerId}/upload`, {
+        filename: file.name,
+        content: fileContent,
+        encoding: isZip ? 'base64' : 'utf8',
+      });
+      
+      const elapsed = Date.now() - startTime;
+      addMessage(layerId, `📡 Response received in ${elapsed}ms`);
+      
+      if (response && response.success !== false) {
+        addMessage(layerId, `✅ SUCCESS! ${response.feature_count?.toLocaleString() || '?'} features · ${response.size_kb || '?'} KB`);
+        addMessage(layerId, `✅ ${response.message || 'Upload complete!'}`);
         load();
       } else {
-        setUploadMsg(p=>({...p,[layerId]:{ok:false, text:`❌ ${d.detail||'Upload failed'}`}}));
+        addMessage(layerId, `❌ ERROR: ${response?.detail || response?.message || 'Upload failed'}`, true);
       }
-    } catch {
-      setUploadMsg(p=>({...p,[layerId]:{ok:false, text:'❌ Network error'}}));
+    } catch(err) {
+      addMessage(layerId, `❌ ERROR: ${err.message || 'Unknown error'}`, true);
     }
+    
+    addMessage(layerId, `🏁 Finished at ${new Date().toLocaleTimeString()}`);
     setUploading(p=>({...p,[layerId]:false}));
   };
 
@@ -1473,9 +1668,11 @@ const MapLayersSection = ({ scopeFilter = null }) => {
                       // Only show upload UI for layers that accept CSV
                       const uploadable = ['geojson_fc','geojson'].includes(l.layer_type);
                       if (!uploadable) return null;
+                      
                       return (
                         <div style={{background:C.s3,borderRadius:8,padding:'10px 12px',display:'flex',flexDirection:'column',gap:8}}>
-                          {/* Status row */}
+                          
+                          {/* Status row - shows file info */}
                           <div style={{display:'flex',alignItems:'flex-start',gap:8}}>
                             <div style={{flex:1,minWidth:0}}>
                               {hasData ? (
@@ -1489,19 +1686,45 @@ const MapLayersSection = ({ scopeFilter = null }) => {
                                   {(meta.rows_skipped||0) > 0 && (
                                     <span style={{color:C.warning,fontSize:10}}>⚠ {meta.rows_skipped} rows skipped (bad coords)</span>
                                   )}
+                                  {meta.source_type === 'shapefile' && (
+                                    <span style={{color:C.primary,fontSize:10,padding:'1px 5px',borderRadius:3,background:`${C.primary}20`}}>SHP→GeoJSON</span>
+                                  )}
                                 </div>
                               ) : (
-                                <div style={{fontSize:11,color:C.muted}}>No data uploaded yet — download the template to get started</div>
-                              )}
-                              {msg && (
-                                <div style={{fontSize:11,marginTop:4,padding:'4px 8px',borderRadius:5,
-                                  background:msg.ok?'#10B98115':'#EF444415',
-                                  color:msg.ok?'#10B981':C.danger,lineHeight:1.5}}>
-                                  {msg.text}
-                                </div>
+                                <div style={{fontSize:11,color:C.muted}}>No data uploaded yet — upload a CSV or Shapefile ZIP to add data</div>
                               )}
                             </div>
                           </div>
+                          
+                          {/* Message log */}
+                          {msg && (
+                            <div style={{
+                              background: msg.ok ? `${C.success}15` : `${C.danger}15`,
+                              border: `1px solid ${msg.ok ? C.success : C.danger}30`,
+                              borderRadius: 8, padding: '8px 10px', marginTop: 4,
+                              fontSize: 10, fontFamily: 'monospace'
+                            }}>
+                              <div style={{color: msg.ok ? C.success : C.danger, fontWeight:'bold',
+                                marginBottom: msg.history?.length ? 6 : 0,
+                                paddingBottom: msg.history?.length ? 6 : 0,
+                                borderBottom: msg.history?.length ? `1px solid ${C.border}` : 'none'}}>
+                                📍 NOW: {msg.text}
+                              </div>
+                              {msg.history && msg.history.length > 0 && (
+                                <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                                  {msg.history.map((historyItem, idx) => (
+                                    <div key={idx} style={{display:'flex',gap:8,padding:'3px 0',
+                                      borderBottom: idx < msg.history.length - 1 ? `1px solid ${C.border}30` : 'none',
+                                      fontSize:9, color: historyItem.isError ? C.danger : C.text}}>
+                                      <span style={{color:C.muted,width:'60px',flexShrink:0}}>{historyItem.timestamp}</span>
+                                      <span style={{flex:1,wordBreak:'break-word'}}>{historyItem.text}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          
                           {/* Action buttons */}
                           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                             {/* Template download */}
@@ -1509,13 +1732,13 @@ const MapLayersSection = ({ scopeFilter = null }) => {
                               style={{display:'inline-block',padding:'5px 12px',
                                 background:'none',border:`1px solid ${C.border}`,borderRadius:6,
                                 color:C.muted,fontSize:11,fontWeight:600,textDecoration:'none',flexShrink:0}}>
-                              ⬇ Template
+                              ⬇ CSV Template
                             </a>
+                            
                             {/* CSV upload */}
                             <label style={{cursor:isUp?'default':'pointer',flexShrink:0}}>
                               <input type="file" accept=".csv"
-                                style={{display:'none'}}
-                                disabled={isUp}
+                                style={{display:'none'}} disabled={isUp}
                                 onChange={e=>{
                                   const f = e.target.files?.[0];
                                   if(f) uploadLayerFile(l.id, f);
@@ -1523,17 +1746,34 @@ const MapLayersSection = ({ scopeFilter = null }) => {
                                 }}/>
                               <span style={{display:'inline-block',padding:'5px 14px',
                                 background:isUp?`${C.primary}20`:C.primary,
-                                border:'none',borderRadius:6,
-                                color:'#fff',fontSize:11,fontWeight:700,
+                                border:'none',borderRadius:6,color:'#fff',fontSize:11,fontWeight:700,
                                 opacity:isUp?0.6:1}}>
                                 {isUp ? 'Uploading…' : '⬆ Upload CSV'}
                               </span>
                             </label>
+
+                            {/* Shapefile ZIP upload */}
+                            <label style={{cursor:isUp?'default':'pointer',flexShrink:0}}>
+                              <input type="file" accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream"
+                                style={{display:'none'}} disabled={isUp}
+                                onChange={e=>{
+                                  const f = e.target.files?.[0];
+                                  if(f) uploadLayerFile(l.id, f);
+                                  e.target.value='';
+                                }}/>
+                              <span style={{display:'inline-block',padding:'5px 14px',
+                                background:isUp?`${C.warning}20`:`${C.warning}DD`,
+                                border:'none',borderRadius:6,color:'#fff',fontSize:11,fontWeight:700,
+                                opacity:isUp?0.6:1}}>
+                                {isUp ? 'Uploading…' : '🗺 Upload Shapefile (.zip)'}
+                              </span>
+                            </label>
                           </div>
-                          {/* Column hint */}
-                          <div style={{fontSize:10,color:C.muted,lineHeight:1.5}}>
-                            CSV must have <code style={{background:C.s2,padding:'1px 4px',borderRadius:3,color:C.bright}}>lat</code> and <code style={{background:C.s2,padding:'1px 4px',borderRadius:3,color:C.bright}}>lon</code> columns.
-                            Download the template above for the exact format and sample data.
+                          
+                          {/* Format hints */}
+                          <div style={{fontSize:10,color:C.muted,lineHeight:1.6,background:C.s2,borderRadius:6,padding:'8px 10px'}}>
+                            <div><strong style={{color:C.text}}>CSV:</strong> Must have <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>lat</code> and <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>lon</code> columns. Download template above.</div>
+                            <div style={{marginTop:4}}><strong style={{color:C.text}}>Shapefile ZIP:</strong> ZIP containing <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>.shp</code> <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>.shx</code> <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>.dbf</code> (and optionally <code style={{background:C.bg,padding:'1px 4px',borderRadius:3,color:C.bright}}>.prj</code>). Supports Points, Polygons, MultiPolygons — auto-converted to GeoJSON.</div>
                           </div>
                         </div>
                       );
